@@ -8,6 +8,8 @@ import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -22,7 +24,7 @@ import com.zhogo.turn.overlay.FloatingService
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        TurnSocket.connect()
+        TurnSocket.initialize(this)
         setContent { ZHOGOTurnScreen() }
     }
 }
@@ -30,12 +32,14 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun ZHOGOTurnScreen() {
     val context = LocalContext.current
+    var server by remember { mutableStateOf(TurnSocket.getServerUrl().removeSuffix("/ws")) }
     var name by remember { mutableStateOf("ZHOGO") }
     var code by remember { mutableStateOf("") }
     var room by remember { mutableStateOf("") }
-    var status by remember { mutableStateOf("Connect to the server to begin.") }
+    var status by remember { mutableStateOf("Enter your Render URL, then connect.") }
     var current by remember { mutableStateOf("Waiting for room") }
     var myTurn by remember { mutableStateOf(false) }
+    var players by remember { mutableStateOf(emptyList<String>()) }
 
     DisposableEffect(Unit) {
         TurnSocket.onMessage = { status = it }
@@ -45,9 +49,11 @@ fun ZHOGOTurnScreen() {
             myTurn = mine
             status = if (mine) "It is your turn." else "Waiting for $current"
         }
+        TurnSocket.onPlayers = { players = it }
         onDispose {
             TurnSocket.onMessage = null
             TurnSocket.onState = null
+            TurnSocket.onPlayers = null
         }
     }
 
@@ -56,53 +62,76 @@ fun ZHOGOTurnScreen() {
         background = androidx.compose.ui.graphics.Color(0xFF090D0B),
         surface = androidx.compose.ui.graphics.Color(0xFF111A16)
     )) {
-        Surface(modifier = Modifier.fillMaxSize()) {
+        Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             Column(
-                modifier = Modifier.fillMaxSize().padding(22.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
+                modifier = Modifier.fillMaxSize().padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Text("ZHOGO TURN", style = MaterialTheme.typography.headlineLarge, color = MaterialTheme.colorScheme.primary)
-                Text("Multiplayer floating turn control")
+                Text("Take turns with friends using a floating control.")
+                OutlinedTextField(
+                    value = server, onValueChange = { server = it },
+                    label = { Text("Render server URL (https://...onrender.com)") },
+                    modifier = Modifier.fillMaxWidth(), singleLine = true
+                )
+                Button(onClick = {
+                    if (TurnSocket.saveServerUrl(context, server)) status = "Connecting to server…"
+                    else status = "URL must start with https:// or wss://"
+                }, modifier = Modifier.fillMaxWidth()) { Text("SAVE SERVER & CONNECT") }
+
                 OutlinedTextField(
                     value = name, onValueChange = { name = it.take(20) },
-                    label = { Text("Your display name") }, modifier = Modifier.fillMaxWidth()
+                    label = { Text("Your display name") }, modifier = Modifier.fillMaxWidth(), singleLine = true
                 )
-                Button(onClick = { TurnSocket.connect(); TurnSocket.createRoom(name) }, modifier = Modifier.fillMaxWidth()) {
+                Button(onClick = { TurnSocket.createRoom(name) }, modifier = Modifier.fillMaxWidth()) {
                     Text("CREATE ROOM")
                 }
                 OutlinedTextField(
-                    value = code, onValueChange = { code = it.uppercase().take(6) },
-                    label = { Text("Room code") }, modifier = Modifier.fillMaxWidth(),
+                    value = code, onValueChange = { code = it.uppercase().filter { ch -> ch.isLetterOrDigit() }.take(6) },
+                    label = { Text("6-character room code") }, modifier = Modifier.fillMaxWidth(), singleLine = true,
                     keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Characters)
                 )
-                OutlinedButton(onClick = { TurnSocket.connect(); TurnSocket.joinRoom(code, name) }, modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(onClick = { TurnSocket.joinRoom(code, name) }, modifier = Modifier.fillMaxWidth()) {
                     Text("JOIN ROOM")
                 }
+
                 HorizontalDivider()
-                Text("ROOM: ${room.ifBlank { "—" }}")
+                Text("ROOM: ${room.ifBlank { "—" }}", color = MaterialTheme.colorScheme.primary)
                 Text("CURRENT TURN: $current")
-                Text(status, color = MaterialTheme.colorScheme.primary)
-                Button(
-                    onClick = {
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(context)) {
-                            val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))
-                            context.startActivity(intent)
-                        } else {
-                            ContextCompat.startForegroundService(context, Intent(context, FloatingService::class.java))
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("SHOW FLOATING BUTTON") }
-                OutlinedButton(
-                    onClick = { context.stopService(Intent(context, FloatingService::class.java)) },
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("HIDE FLOATING BUTTON") }
-                if (room.isNotBlank()) {
-                    Text(if (myTurn) "You are next to press." else "Wait for your turn.")
+                Text(status, color = if (myTurn) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+                if (players.isNotEmpty()) {
+                    Text("PLAYERS (${players.size})", style = MaterialTheme.typography.titleMedium)
+                    LazyColumn(modifier = Modifier.heightIn(max = 120.dp)) {
+                        items(players) { player -> Text("• $player", modifier = Modifier.padding(vertical = 2.dp)) }
+                    }
                 }
-                Spacer(Modifier.weight(1f))
-                Text("The overlay sends a turn signal only; it does not click inside other apps.",
-                    style = MaterialTheme.typography.bodySmall)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = {
+                        TurnSocket.leaveRoom()
+                        room = ""
+                        current = "Waiting for room"
+                        myTurn = false
+                    }, modifier = Modifier.weight(1f)) { Text("LEAVE ROOM") }
+                    OutlinedButton(onClick = {
+                        val share = Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(Intent.EXTRA_TEXT, "Join my ZHOGO TURN room: $room")
+                        }
+                        context.startActivity(Intent.createChooser(share, "Share room code"))
+                    }, enabled = room.isNotBlank(), modifier = Modifier.weight(1f)) { Text("SHARE ROOM") }
+                }
+                Button(onClick = {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(context)) {
+                        val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:${context.packageName}"))
+                        context.startActivity(intent)
+                    } else {
+                        ContextCompat.startForegroundService(context, Intent(context, FloatingService::class.java))
+                    }
+                }, modifier = Modifier.fillMaxWidth()) { Text("SHOW FLOATING BUTTON") }
+                OutlinedButton(onClick = { context.stopService(Intent(context, FloatingService::class.java)) }, modifier = Modifier.fillMaxWidth()) {
+                    Text("HIDE FLOATING BUTTON")
+                }
+                Text("The floating button sends a turn signal to your friends. It does not control or tap inside other apps.", style = MaterialTheme.typography.bodySmall)
             }
         }
     }

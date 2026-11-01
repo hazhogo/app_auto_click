@@ -8,8 +8,12 @@ Android + Node.js/WebSocket starter for turn-taking between 2–10 friends.
 - Floating overlay button using Android `WindowManager`.
 - Tapping the floating button submits the current player's turn and advances to the next player.
 - Room-state sync and main-thread UI callbacks.
-- Draggable floating button.
-- Skips an offline current player so a room does not get stuck.
+- Editable Render URL in the Android app (saved on the device).
+- Automatic WebSocket reconnect with rejoining the last room.
+- Player list, room-code sharing, and leave-room control.
+- Draggable floating button with separate UI/service event callbacks.
+- Removes disconnected players from the room so turn order cannot get stuck on an offline player.
+- WebSocket heartbeat and empty-room cleanup.
 
 The overlay only sends a turn event to this app's server. It does **not** tap or control other apps.
 
@@ -22,10 +26,8 @@ The overlay only sends a turn event to this app's server. It does **not** tap or
 1. Push this repository to GitHub.
 2. In Render, choose **New → Blueprint**, select the repository, and let it read `render.yaml`.
 3. Render creates the Web Service. Copy its public URL, e.g. `https://zhogo-turn-server.onrender.com`.
-4. The Android app currently uses a placeholder URL. Replace `https://YOUR-RENDER-SERVICE.onrender.com` in:
-   `android/app/src/main/java/com/zhogo/turn/network/TurnSocket.kt`
-   with your actual Render hostname (keep `wss://`).
-5. Commit and push the change; GitHub Actions builds a debug APK.
+4. Install the APK, open it, enter your Render URL in the **Render server URL** field (for example `https://zhogo-turn-server.onrender.com`), then tap **SAVE SERVER & CONNECT**. The app converts the HTTPS URL to WSS and saves it on that device; no source-code edit is needed.
+5. Create a room or join with the six-character code. Share the code with friends from the app.
 
 For local server:
 ```bash
@@ -55,7 +57,7 @@ The APK is a debug build for testing. For distribution, create a signed release 
 Client → server:
 - `CREATE_ROOM {name}`
 - `JOIN_ROOM {roomCode,name}`
-- `PRESS {roomCode,playerId,turnVersion}`
+- `PRESS {roomCode,turnVersion}` (the server identifies the player from the WebSocket connection)
 
 Server → client:
 - `ROOM_STATE {room}`
@@ -66,7 +68,7 @@ Server → client:
 
 ## Important limitations
 - Room state is in memory: a Render restart/redeploy clears active rooms. Add Redis/PostgreSQL persistence for production.
-- A disconnected player remains in the room roster; they can rejoin by entering the room code as a new player. Offline entries still count toward the 10-player limit.
-- The client does not queue turn presses while disconnected, preventing an old press from being replayed after reconnect.
-- This starter does not include accounts, invite links, push notifications, or end-to-end encryption.
+- A disconnected player is removed from the room. On reconnect (including after reopening the app) the app attempts to rejoin the last room; the player may receive a new position in the turn order. The room must still exist on the server.
+- Create/join requests may be queued while the socket is connecting. Turn presses are never queued while disconnected.
+- This starter does not include accounts, push notifications when the app process is fully stopped, persistent room storage, or end-to-end encryption. Render free instances may sleep when idle; the first connection can take longer after inactivity.
 - Use only in apps and situations where overlay use is permitted. Android may restrict overlays over secure/system screens.

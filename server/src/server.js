@@ -47,28 +47,19 @@ function detach(ws) {
   clients.delete(ws);
   const room = rooms.get(info.roomCode);
   if (!room) return;
-  const player = room.players.find(p => p.id === info.playerId);
-  if (player) {
-    const wasCurrent = room.players[room.turnIndex]?.id === player.id;
-    player.online = false;
-    player.ws = null;
-
-    if (wasCurrent) {
-      let nextIndex = -1;
-      for (let step = 1; step <= room.players.length; step++) {
-        const candidate = (room.turnIndex + step) % room.players.length;
-        if (room.players[candidate].online) {
-          nextIndex = candidate;
-          break;
-        }
-      }
-      if (nextIndex >= 0) room.turnIndex = nextIndex;
-      room.turnVersion += 1;
-    }
-
-    broadcast(room, { type: 'PLAYER_LEFT', playerId: player.id });
-    broadcastState(room);
+  const oldIndex = room.players.findIndex(p => p.id === info.playerId);
+  if (oldIndex < 0) return;
+  const [player] = room.players.splice(oldIndex, 1);
+  if (room.players.length === 0) {
+    rooms.delete(room.code);
+    return;
   }
+  if (oldIndex < room.turnIndex) room.turnIndex -= 1;
+  else if (oldIndex === room.turnIndex) room.turnIndex %= room.players.length;
+  room.turnVersion += 1;
+  room.turnIndex = Math.max(0, Math.min(room.turnIndex, room.players.length - 1));
+  broadcast(room, { type: 'PLAYER_LEFT', playerId: player.id });
+  broadcastState(room);
 }
 
 const server = http.createServer((req, res) => {
@@ -82,6 +73,8 @@ const server = http.createServer((req, res) => {
 
 const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 16 * 1024 });
 wss.on('connection', ws => {
+  ws.isAlive = true;
+  ws.on('pong', () => { ws.isAlive = true; });
   ws.on('message', raw => {
     let msg;
     try { msg = JSON.parse(raw.toString()); }
@@ -92,6 +85,7 @@ wss.on('connection', ws => {
     }
 
     if (msg.type === 'CREATE_ROOM') {
+      if (clients.has(ws)) detach(ws);
       const name = cleanName(msg.name);
       if (!name) return send(ws, { type: 'ERROR', message: 'Enter a display name.' });
       const code = makeCode();
@@ -111,7 +105,7 @@ wss.on('connection', ws => {
       if (!name) return send(ws, { type: 'ERROR', message: 'Enter a display name.' });
       if (!room) return send(ws, { type: 'ERROR', message: 'Room not found.' });
       if (room.players.length >= MAX_PLAYERS) return send(ws, { type: 'ERROR', message: 'Room is full (10 players maximum).' });
-      if (clients.has(ws)) return send(ws, { type: 'ERROR', message: 'Already joined a room.' });
+      if (clients.has(ws)) return send(ws, { type: 'ERROR', message: 'Leave your current room before joining another.' });
 
       const player = {
         id: crypto.randomUUID(), name, online: true,
@@ -163,6 +157,15 @@ wss.on('connection', ws => {
   ws.on('close', () => detach(ws));
   ws.on('error', () => detach(ws));
 });
+
+const heartbeat = setInterval(() => {
+  for (const ws of wss.clients) {
+    if (ws.isAlive === false) { ws.terminate(); continue; }
+    ws.isAlive = false;
+    ws.ping();
+  }
+}, 30000);
+heartbeat.unref();
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`ZHOGO TURN listening on ${PORT}`);
