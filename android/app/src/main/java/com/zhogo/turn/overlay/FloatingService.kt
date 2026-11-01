@@ -1,72 +1,191 @@
 package com.zhogo.turn.overlay
 
-import android.app.Service
+import android.app.*
+import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+import android.os.Build
 import android.os.IBinder
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.WindowManager
-import android.widget.Button
+import android.widget.TextView
 import com.zhogo.turn.network.TurnSocket
 
 class FloatingService : Service() {
 
     private lateinit var windowManager: WindowManager
-    private lateinit var floatingButton: Button
-    private lateinit var turnSocket: TurnSocket
+    private var button: TextView? = null
+    private var banner: TextView? = null
 
-    override fun onBind(intent: Intent?): IBinder? = null
+    private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
 
     override fun onCreate() {
         super.onCreate()
+        startForegroundNotification()
+        windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
 
-        windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
-        floatingButton = Button(this).apply {
-            text = "TURN"
-            setBackgroundColor(Color.GREEN)
+        addStatusBanner()
+        addFloatingButton()
+
+        TurnSocket.onOverlayState = { label, isGreen ->
+            updateTurnUI(label, isGreen)
+        }
+
+        TurnSocket.connect()
+        updateTurnUI(if (TurnSocket.currentState == "GREEN") "STATUS: GREEN" else "STATUS: RED", TurnSocket.currentState == "GREEN")
+    }
+
+    private fun startForegroundNotification() {
+        val channelId = "zhogo_turn_service"
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(channelId, "ZHOGO TURN", NotificationManager.IMPORTANCE_LOW)
+            getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+        }
+        val notification = Notification.Builder(this, channelId)
+            .setContentTitle("ZHOGO TURN is active")
+            .setContentText("Global button sync is running")
+            .setSmallIcon(android.R.drawable.ic_media_play)
+            .build()
+        startForeground(7, notification)
+    }
+
+    private fun addStatusBanner() {
+        val view = TextView(this).apply {
+            text = "CONNECTING..."
+            textSize = 14f
+            setTextColor(Color.WHITE)
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setPadding(dp(16), dp(10), dp(16), dp(10))
+            background = GradientDrawable().apply {
+                setColor(Color.rgb(25, 45, 35))
+                cornerRadius = dp(14).toFloat()
+                setStroke(dp(1), Color.rgb(0, 255, 130))
+            }
+            elevation = dp(8).toFloat()
         }
 
         val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O)
+            dp(280), dp(50),
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-            else
-                WindowManager.LayoutParams.TYPE_PHONE,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
         ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            x = 100
-            y = 100
+            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            y = dp(35)
         }
 
-        windowManager.addView(floatingButton, params)
+        banner = view
+        windowManager.addView(view, params)
+    }
 
-        // الاتصال بالسيرفر ومزامنة الزر
-        turnSocket = TurnSocket { state ->
-            floatingButton.post {
-                when (state) {
-                    "RED" -> floatingButton.setBackgroundColor(Color.RED)
-                    "GREEN" -> floatingButton.setBackgroundColor(Color.GREEN)
+    private fun addFloatingButton() {
+        val view = TextView(this).apply {
+            text = "BTN"
+            textSize = 13f
+            setTextColor(Color.WHITE)
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            background = buttonBackground(TurnSocket.currentState == "GREEN")
+        }
+
+        val params = WindowManager.LayoutParams(
+            dp(76), dp(76),
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.END
+            x = dp(18)
+            y = dp(180)
+        }
+
+        button = view
+
+        var downX = 0f
+        var downY = 0f
+        var startX = 0
+        var startY = 0
+        var dragged = false
+        val touchSlop = 8 * resources.displayMetrics.density
+
+        view.setOnTouchListener { v, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    downX = event.rawX
+                    downY = event.rawY
+                    startX = params.x
+                    startY = params.y
+                    dragged = false
+                    true
                 }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = event.rawX - downX
+                    val dy = event.rawY - downY
+                    if (kotlin.math.abs(dx) > touchSlop || kotlin.math.abs(dy) > touchSlop) {
+                        dragged = true
+                    }
+                    if (dragged) {
+                        params.x = (startX - dx.toInt()).coerceAtLeast(0)
+                        params.y = (startY + dy.toInt()).coerceAtLeast(0)
+                        runCatching { windowManager.updateViewLayout(v, params) }
+                    }
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    if (!dragged) v.performClick()
+                    true
+                }
+                else -> true
             }
         }
-        turnSocket.connect()
 
-        floatingButton.setOnClickListener {
-            turnSocket.sendClickAction()
+        view.setOnClickListener {
+            TurnSocket.press()
+        }
+
+        windowManager.addView(view, params)
+    }
+
+    private fun buttonBackground(isGreen: Boolean) = GradientDrawable().apply {
+        shape = GradientDrawable.OVAL
+        setColor(if (isGreen) Color.rgb(0, 190, 95) else Color.rgb(220, 40, 40))
+        setStroke(dp(3), Color.WHITE)
+    }
+
+    private fun updateTurnUI(label: String, isGreen: Boolean) {
+        button?.apply {
+            background = buttonBackground(isGreen)
+        }
+        banner?.apply {
+            this.text = label
+            background = GradientDrawable().apply {
+                cornerRadius = dp(14).toFloat()
+                setColor(if (isGreen) Color.rgb(0, 145, 65) else Color.rgb(160, 30, 30))
+                setStroke(dp(1), if (isGreen) Color.rgb(100, 255, 150) else Color.rgb(255, 150, 150))
+            }
         }
     }
 
     override fun onDestroy() {
+        TurnSocket.onOverlayState = null
+        button?.let { runCatching { windowManager.removeView(it) } }
+        banner?.let { runCatching { windowManager.removeView(it) } }
+        button = null
+        banner = null
         super.onDestroy()
-        if (::turnSocket.isInitialized) {
-            turnSocket.disconnect()
-        }
-        if (::floatingButton.isInitialized) {
-            windowManager.removeView(floatingButton)
-        }
     }
+
+    override fun onBind(intent: Intent?): IBinder? = null
 }

@@ -1,40 +1,65 @@
+'use strict';
+
 const http = require('http');
-const { WebSocketServer } = require('ws');
+const { WebSocketServer, WebSocket } = require('ws');
 
-const server = http.createServer((req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('ZK Turn Server is active and running!\n');
-});
-
-const wss = new WebSocketServer({ server });
-
+const PORT = Number(process.env.PORT || 10000);
 let currentState = "GREEN"; // الحالة الافتراضية للزر
 
-wss.on('connection', (ws) => {
-    // إرسال الحالة الحالية للعميل فور الاتصال
-    ws.send(JSON.stringify({ type: 'STATE_UPDATE', state: currentState }));
-
-    ws.on('message', (message) => {
-        try {
-            const data = JSON.parse(message);
-            if (data.action === 'TOGGLE_BUTTON') {
-                // تبديل الحالة بين GREEN و RED
-                currentState = currentState === "GREEN" ? "RED" : "GREEN";
-
-                // بث الحالة الجديدة لجميع العملاء المتصلين
-                wss.clients.forEach((client) => {
-                    if (client.readyState === client.OPEN) {
-                        client.send(JSON.stringify({ type: 'STATE_UPDATE', state: currentState }));
-                    }
-                });
-            }
-        } catch (e) {
-            console.error("Error parsing message:", e);
-        }
-    });
+const server = http.createServer((req, res) => {
+  if (req.url === '/health') {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    return res.end(JSON.stringify({ ok: true, state: currentState }));
+  }
+  res.writeHead(200, { 'content-type': 'text/plain' });
+  res.end('ZHOGO TURN server is running');
 });
 
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
+const wss = new WebSocketServer({ server, path: '/ws', maxPayload: 16 * 1024 });
+
+function broadcastState() {
+  const payload = JSON.stringify({ type: 'STATE_UPDATE', state: currentState });
+  for (const client of wss.clients) {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(payload);
+    }
+  }
+}
+
+wss.on('connection', ws => {
+  ws.isAlive = true;
+  ws.on('pong', () => { ws.isAlive = true; });
+
+  // إرسال الحالة الحالية فور اتصال أي مستخدم جديد
+  if (ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'STATE_UPDATE', state: currentState }));
+  }
+
+  ws.on('message', raw => {
+    let msg;
+    try { msg = JSON.parse(raw.toString()); }
+    catch { return; }
+
+    if (msg.type === 'TOGGLE_BUTTON' || msg.type === 'PRESS') {
+      // تبديل الحالة بين GREEN و RED لدى الجميع
+      currentState = (currentState === "GREEN") ? "RED" : "GREEN";
+      broadcastState();
+    }
+  });
+
+  ws.on('close', () => {});
+  ws.on('error', () => {});
+});
+
+const heartbeat = setInterval(() => {
+  for (const ws of wss.clients) {
+    if (ws.isAlive === false) { ws.terminate(); continue; }
+    ws.isAlive = false;
+    ws.ping();
+  }
+}, 30000);
+heartbeat.unref();
+
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`ZHOGO TURN server listening on ${PORT}`);
 });
