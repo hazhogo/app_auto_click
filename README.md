@@ -6,7 +6,7 @@ Android + Node.js/WebSocket starter for turn-taking between 2–10 friends.
 - Create/join a room using a room code.
 - Server-authoritative turn order (atomic in-memory updates).
 - Floating overlay button using Android `WindowManager`.
-- Tapping the floating button toggles one shared room signal: green → red → green for everyone.
+- Tapping the floating button submits the current player's turn and advances to the next player.
 - Room-state sync and main-thread UI callbacks.
 - Editable Render URL in the Android app (saved on the device).
 - Automatic WebSocket reconnect with rejoining the last room.
@@ -57,7 +57,7 @@ The APK is a debug build for testing. For distribution, create a signed release 
 Client → server:
 - `CREATE_ROOM {name}`
 - `JOIN_ROOM {roomCode,name}`
-- `PRESS {roomCode,signalVersion}` (the server identifies the player and toggles the shared signal)
+- `PRESS {roomCode,turnVersion}` (the server identifies the player from the WebSocket connection)
 
 Server → client:
 - `ROOM_STATE {room}`
@@ -72,9 +72,3 @@ Server → client:
 - Create/join requests may be queued while the socket is connecting. Turn presses are never queued while disconnected.
 - This starter does not include accounts, push notifications when the app process is fully stopped, persistent room storage, or end-to-end encryption. Render free instances may sleep when idle; the first connection can take longer after inactivity.
 - Use only in apps and situations where overlay use is permitted. Android may restrict overlays over secure/system screens.
-
-## Shared signal behavior
-- Every room starts green.
-- Any connected participant can press the floating control.
-- The first press changes the state to red for every participant; the next press changes it back to green.
-- The server validates `signalVersion` to prevent an outdated client from overwriting a newer state.
