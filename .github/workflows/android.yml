@@ -19,26 +19,26 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
 
-      - name: Install Android SDK packages
+      - name: Locate and configure Android SDK
         shell: bash
         run: |
           echo "ANDROID_HOME=$ANDROID_HOME"
-          test -d "$ANDROID_HOME" || { echo "Android SDK directory was not found"; exit 1; }
-          sdkmanager --licenses >/dev/null || true
-          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
-          printf 'sdk.dir=%s\n' "$ANDROID_HOME" > android/local.properties
+          SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | head -n 1)
+          if [ -z "$SDKMANAGER" ]; then
+            echo "sdkmanager not found under $ANDROID_HOME/cmdline-tools"
+            exit 1
+          fi
+          yes | "$SDKMANAGER" --licenses || true
+          "$SDKMANAGER" --install "platforms;android-35" "build-tools;35.0.0"
 
       - name: Build APK
         working-directory: android
-        run: gradle --no-daemon --stacktrace assembleDebug
+        run: gradle --no-daemon assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
