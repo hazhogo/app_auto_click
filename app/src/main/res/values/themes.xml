@@ -1,7 +1,0 @@
-<resources>
-    <style name="Theme.TapLinkDark" parent="Theme.MaterialComponents.DayNight.NoActionBar">
-        <item name="colorPrimary">#00E5FF</item>
-        <item name="android:statusBarColor">#0A0E17</item>
-        <item name="android:windowBackground">#0A0E17</item>
-    </style>
-</resources>
