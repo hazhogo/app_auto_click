@@ -145,7 +145,7 @@ object TurnSocket {
                             main.post {
                                 onState?.invoke(roomCode.orEmpty(), currentName, isMyTurn, turnVersion)
                                 onPlayers?.invoke(names)
-                                onOverlayState?.invoke(if (isMyTurn) "YOUR TURN!" else "TURN: $currentName",true)
+                                onOverlayState?.invoke(if (isMyTurn) "YOUR TURN!" else "TURN: $currentName",turnVersion % 2L == 0L)
                             }
                         }
                         "ERROR" -> message(obj.optString("message", "Server error."))

@@ -206,17 +206,16 @@ class FloatingService : Service() {
             setStroke(dp(3), Color.WHITE)
         }
 
-    private fun updateTurnUI(label: String, canPress: Boolean) {
+    private fun updateTurnUI(label: String, green: Boolean) {
         button?.apply {
             text = "TURN"
-            alpha = if (canPress) 1f else 0.7f
-            background = buttonBackground(canPress)
+            alpha = if (TurnSocket.isMyTurn) 1f else 0.7f
+            background = buttonBackground(TurnSocket.isMyTurn)
         }
-
-        // Green notification is shown on every connected player's device.
-        updateBanner(label, true)
+    
+        updateBanner(label, green)
     }
-
+    
     private fun updateBanner(text: String, green: Boolean) {
         banner?.apply {
             this.text = text
