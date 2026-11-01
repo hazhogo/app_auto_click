@@ -36,7 +36,12 @@ class FloatingService : Service() {
         }
 
         TurnSocket.connect()
-        updateTurnUI(if (TurnSocket.currentState == "GREEN") "STATUS: GREEN" else "STATUS: RED", TurnSocket.currentState == "GREEN")
+        val initialRoom = TurnSocket.currentRoomCode
+        if (initialRoom.isNotBlank()) {
+            updateTurnUI("ROOM: $initialRoom | ${if (TurnSocket.currentState == "GREEN") "GREEN" else "RED"}", TurnSocket.currentState == "GREEN")
+        } else {
+            updateTurnUI("NOT IN ROOM", false)
+        }
     }
 
     private fun startForegroundNotification() {
@@ -47,7 +52,7 @@ class FloatingService : Service() {
         }
         val notification = Notification.Builder(this, channelId)
             .setContentTitle("ZHOGO TURN is active")
-            .setContentText("Global button sync is running")
+            .setContentText("Room button sync is running")
             .setSmallIcon(android.R.drawable.ic_media_play)
             .build()
         startForeground(7, notification)
