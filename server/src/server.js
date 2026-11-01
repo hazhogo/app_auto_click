@@ -49,8 +49,23 @@ function detach(ws) {
   if (!room) return;
   const player = room.players.find(p => p.id === info.playerId);
   if (player) {
+    const wasCurrent = room.players[room.turnIndex]?.id === player.id;
     player.online = false;
     player.ws = null;
+
+    if (wasCurrent) {
+      let nextIndex = -1;
+      for (let step = 1; step <= room.players.length; step++) {
+        const candidate = (room.turnIndex + step) % room.players.length;
+        if (room.players[candidate].online) {
+          nextIndex = candidate;
+          break;
+        }
+      }
+      if (nextIndex >= 0) room.turnIndex = nextIndex;
+      room.turnVersion += 1;
+    }
+
     broadcast(room, { type: 'PLAYER_LEFT', playerId: player.id });
     broadcastState(room);
   }
@@ -103,6 +118,9 @@ wss.on('connection', ws => {
         order: room.players.length, ws
       };
       room.players.push(player);
+      if (!room.players.some((p, index) => index !== player.order && p.online)) {
+        room.turnIndex = player.order;
+      }
       clients.set(ws, { roomCode: code, playerId: player.id });
       send(ws, { type: 'WELCOME', playerId: player.id, roomCode: code });
       broadcast(room, { type: 'PLAYER_JOINED', player: { id: player.id, name, online: true, order: player.order } });

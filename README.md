@@ -7,7 +7,9 @@ Android + Node.js/WebSocket starter for turn-taking between 2–10 friends.
 - Server-authoritative turn order (atomic in-memory updates).
 - Floating overlay button using Android `WindowManager`.
 - Tapping the floating button submits the current player's turn and advances to the next player.
-- Reconnect and room-state sync.
+- Room-state sync and main-thread UI callbacks.
+- Draggable floating button.
+- Skips an offline current player so a room does not get stuck.
 
 The overlay only sends a turn event to this app's server. It does **not** tap or control other apps.
 
@@ -64,5 +66,7 @@ Server → client:
 
 ## Important limitations
 - Room state is in memory: a Render restart/redeploy clears active rooms. Add Redis/PostgreSQL persistence for production.
+- A disconnected player remains in the room roster; they can rejoin by entering the room code as a new player. Offline entries still count toward the 10-player limit.
+- The client does not queue turn presses while disconnected, preventing an old press from being replayed after reconnect.
 - This starter does not include accounts, invite links, push notifications, or end-to-end encryption.
 - Use only in apps and situations where overlay use is permitted. Android may restrict overlays over secure/system screens.

@@ -3,6 +3,8 @@ package com.zhogo.turn.network
 import okhttp3.*
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
+import android.os.Handler
+import android.os.Looper
 
 object TurnSocket {
     // Replace this with your Render service URL. Use wss://, not https://.
@@ -13,7 +15,6 @@ object TurnSocket {
         .build()
 
     @Volatile private var socket: WebSocket? = null
-    private val pending = java.util.concurrent.ConcurrentLinkedQueue<String>()
     @Volatile var playerId: String? = null
         private set
     @Volatile var roomCode: String? = null
@@ -28,23 +29,26 @@ object TurnSocket {
     var onState: ((String, String, Boolean, Long) -> Unit)? = null
     var onMessage: ((String) -> Unit)? = null
 
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    private fun notifyMessage(message: String) {
+        mainHandler.post { onMessage?.invoke(message) }
+    }
+
+    private fun notifyState(code: String, name: String, mine: Boolean, version: Long) {
+        mainHandler.post { onState?.invoke(code, name, mine, version) }
+    }
+
     fun connect() {
         if (SERVER_URL.contains("YOUR-RENDER-SERVICE")) {
-            onMessage?.invoke("Set your Render URL in TurnSocket.kt first.")
+            notifyMessage("Set your Render URL in TurnSocket.kt first.")
             return
         }
         if (socket != null) return
         val request = Request.Builder().url(SERVER_URL).build()
         socket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                onMessage?.invoke("Connected to server.")
-                while (true) {
-                    val queued = pending.poll() ?: break
-                    if (!webSocket.send(queued)) {
-                        pending.add(queued)
-                        break
-                    }
-                }
+                notifyMessage("Connected to server.")
             }
             override fun onMessage(webSocket: WebSocket, text: String) {
                 try {
@@ -68,49 +72,64 @@ object TurnSocket {
                                 }
                             }
                             currentPlayerName = currentName
-                            onState?.invoke(roomCode.orEmpty(), currentName, isMyTurn, turnVersion)
+                            notifyState(roomCode.orEmpty(), currentName, isMyTurn, turnVersion)
                         }
-                        "ERROR" -> onMessage?.invoke(obj.optString("message"))
-                        "TURN_ACCEPTED" -> onMessage?.invoke("Turn passed.")
+                        "ERROR" -> notifyMessage(obj.optString("message"))
+                        "TURN_ACCEPTED" -> notifyMessage("Turn passed.")
                     }
                 } catch (_: Exception) {
-                    onMessage?.invoke("Could not read server response.")
+                    notifyMessage("Could not read server response.")
                 }
             }
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 socket = null
-                onMessage?.invoke("Connection lost: ${t.message ?: "network error"}")
+                notifyMessage("Connection lost: ${t.message ?: "network error"}")
             }
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 socket = null
-                onMessage?.invoke("Disconnected.")
+                notifyMessage("Disconnected.")
             }
         })
     }
 
-    fun createRoom(name: String) = send(JSONObject().put("type", "CREATE_ROOM").put("name", name))
-    fun joinRoom(code: String, name: String) = send(
-        JSONObject().put("type", "JOIN_ROOM").put("roomCode", code).put("name", name)
-    )
-    fun press() {
-        val code = roomCode ?: return onMessage?.invoke("Join a room first.")
-        if (!isMyTurn) return onMessage?.invoke("It is not your turn.")
+    fun createRoom(name: String): Unit {
+        send(JSONObject().put("type", "CREATE_ROOM").put("name", name))
+    }
+
+    fun joinRoom(code: String, name: String): Unit {
+        send(JSONObject().put("type", "JOIN_ROOM").put("roomCode", code).put("name", name))
+    }
+
+    fun press(): Unit {
+        val code = roomCode
+        if (code == null) {
+            notifyMessage("Join a room first.")
+            return
+        }
+        if (!isMyTurn) {
+            notifyMessage("It is not your turn.")
+            return
+        }
         send(JSONObject().put("type", "PRESS").put("roomCode", code).put("turnVersion", turnVersion))
     }
-    private fun send(obj: JSONObject) {
+
+    private fun send(obj: JSONObject): Unit {
         val current = socket
-        val encoded = obj.toString()
         if (current == null) {
-            pending.add(encoded)
+            notifyMessage("Not connected. Wait for connection, then try again.")
             connect()
-            onMessage?.invoke("Connecting…")
-        } else if (!current.send(encoded)) {
-            pending.add(encoded)
-            onMessage?.invoke("Message queued; reconnecting may be required.")
+            return
+        }
+        if (!current.send(obj.toString())) {
+            notifyMessage("Message could not be sent. Check your connection.")
         }
     }
     fun disconnect() {
         socket?.close(1000, "User disconnected")
         socket = null
+        playerId = null
+        roomCode = null
+        isMyTurn = false
+        turnVersion = 0
     }
 }
