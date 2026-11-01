@@ -36,6 +36,10 @@ object TurnSocket {
         private set
     @Volatile var isMyTurn: Boolean = false
         private set
+    @Volatile var signalRed: Boolean = false
+        private set
+    @Volatile var signalVersion: Long = 0
+        private set
     @Volatile var currentPlayerName: String = ""
         private set
 
@@ -43,6 +47,7 @@ object TurnSocket {
     var onMessage: ((String) -> Unit)? = null
     var onPlayers: ((List<String>) -> Unit)? = null
     var onOverlayState: ((String, Boolean) -> Unit)? = null
+    var onSignal: ((Boolean) -> Unit)? = null
     var onOverlayMessage: ((String) -> Unit)? = null
 
     fun initialize(context: Context) {
@@ -129,9 +134,8 @@ object TurnSocket {
                         "ROOM_STATE" -> {
                             val room = obj.getJSONObject("room")
                             roomCode = room.getString("code")
-                            turnVersion = room.getLong("turnVersion")
-                            val currentId = room.optString("currentPlayerId")
-                            isMyTurn = currentId == playerId
+                            signalVersion = room.optLong("signalVersion", 0L)
+                            signalRed = room.optString("signal", "green") == "red"
                             val players = room.getJSONArray("players")
                             val names = mutableListOf<String>()
                             var currentName = ""
@@ -143,13 +147,18 @@ object TurnSocket {
                             }
                             currentPlayerName = currentName
                             main.post {
-                                onState?.invoke(roomCode.orEmpty(), currentName, isMyTurn, turnVersion)
+                                onState?.invoke(roomCode.orEmpty(), if (signalRed) "الحالة حمراء" else "الحالة خضراء", signalRed, signalVersion)
                                 onPlayers?.invoke(names)
-                                onOverlayState?.invoke(if (isMyTurn) "YOUR TURN!" else "TURN: $currentName",turnVersion % 2L == 0L)
+                                onSignal?.invoke(signalRed)
+                                onOverlayState?.invoke(if (signalRed) "الحالة: أحمر" else "الحالة: أخضر", !signalRed)
                             }
                         }
                         "ERROR" -> message(obj.optString("message", "Server error."))
-                        "TURN_ACCEPTED" -> message("Turn passed.")
+                        "SIGNAL_CHANGED" -> {
+                            signalVersion = obj.optLong("signalVersion", signalVersion)
+                            signalRed = obj.optString("signal", "green") == "red"
+                            main.post { onSignal?.invoke(signalRed); onOverlayState?.invoke(if (signalRed) "الحالة: أحمر" else "الحالة: أخضر", !signalRed) }
+                        }
                     }
                 } catch (_: Exception) {
                     message("Could not read server response.")
@@ -202,6 +211,8 @@ object TurnSocket {
         roomCode = null
         playerId = null
         isMyTurn = false
+        signalRed = false
+        signalVersion = 0
         socket?.close(1000, "Leave room")
         socket = null
         manuallyClosed = true
@@ -215,8 +226,7 @@ object TurnSocket {
     fun press() {
         val code = roomCode
         if (code == null) return message("Join a room first.")
-        if (!isMyTurn) return message("It is not your turn.")
-        send(JSONObject().put("type", "PRESS").put("roomCode", code).put("turnVersion", turnVersion), queueIfConnecting = false)
+        send(JSONObject().put("type", "PRESS").put("roomCode", code).put("signalVersion", signalVersion), queueIfConnecting = false)
     }
 
     private fun send(obj: JSONObject, queueIfConnecting: Boolean) {

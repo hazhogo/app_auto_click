@@ -35,8 +35,11 @@ class FloatingService : Service() {
         addStatusBanner()
         addFloatingButton()
 
-        TurnSocket.onOverlayState = { label, enabled ->
-            updateTurnUI(label, enabled)
+        TurnSocket.onOverlayState = { label, green ->
+            updateTurnUI(label, green)
+        }
+        TurnSocket.onSignal = { red ->
+            updateTurnUI(if (red) "الحالة: أحمر" else "الحالة: أخضر", !red)
         }
 
         TurnSocket.onOverlayMessage = {
@@ -47,9 +50,8 @@ class FloatingService : Service() {
 
         if (TurnSocket.roomCode != null) {
             updateTurnUI(
-                if (TurnSocket.isMyTurn) "YOUR TURN"
-                else "TURN: ${TurnSocket.currentPlayerName}",
-                TurnSocket.isMyTurn
+                if (TurnSocket.signalRed) "الحالة: أحمر" else "الحالة: أخضر",
+                !TurnSocket.signalRed
             )
         } else {
             updateTurnUI("NOT IN ROOM", false)
@@ -209,8 +211,8 @@ class FloatingService : Service() {
     private fun updateTurnUI(label: String, green: Boolean) {
         button?.apply {
             text = "TURN"
-            alpha = if (TurnSocket.isMyTurn) 1f else 0.7f
-            background = buttonBackground(TurnSocket.isMyTurn)
+            alpha = 1f
+            background = buttonBackground(!TurnSocket.signalRed)
         }
     
         updateBanner(label, green)
@@ -237,6 +239,7 @@ class FloatingService : Service() {
     override fun onDestroy() {
         TurnSocket.onOverlayState = null
         TurnSocket.onOverlayMessage = null
+        TurnSocket.onSignal = null
 
         button?.let {
             runCatching { windowManager.removeView(it) }
